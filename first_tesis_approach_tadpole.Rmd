@@ -1,0 +1,69 @@
+---
+title: "tadpole_Benchmark"
+author: "eider"
+date: "4/2/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("C:/Users/eider/Dropbox/AD experiments/madelon/csvs")
+
+DatosANDI <- read.delim("./TADPOLE_D1_D2.csv",na.strings=c("NA","","#N/A","#DIV/0!"),sep = ",")
+#ordenar por RID
+DatosANDI <- DatosANDIgit[with(DatosANDI,order(RID,EXAMDATE)),]
+
+
+```
+
+
+```{r}
+#obtengo el baseline DXCHANGE 2 es MCI estable
+baselinemci <- DatosANDI[which(DatosANDI$VISCODE=="bl" & DatosANDI$DXCHANGE=="2"),]
+#obtengo todos los que no son baseline y se convirtieron en AD (DXCHANGE 5 es AD)
+dxchange5 <- DatosANDI[which(DatosANDI$VISCODE!="bl" & DatosANDI$DXCHANGE=="5"),]
+#obtengo todos los que estaban en baseline en MCI y despues se convirtieron a AD
+MCI_to_AD <- dxchange5[which(baselinemci$RID %in%  dxchange5$RID),]
+
+MCI_to_AD$status <- 0
+
+```
+
+
+```{r}
+#leer las variables de RMI 
+varnames <- read.delim("./varnames.csv",sep=",")
+colnames(varnames)<-c("names","description")
+#subsetear solo las variables de RMI
+MCI_to_AD <- MCI_to_AD[,c("RID","status",as.character(varnames$names))]
+
+
+```
+
+
+
+```{r}
+
+unique(MCI_to_AD$status)
+#adaptar lasso
+firstLasoModel <- LASSO_1SE(Class ~.,Colon)
+LASSOcv <- randomCV(Colon,
+                    "Class",
+                    LASSO_1SE,
+                    trainFraction = 0.8,
+                    repetitions = 75,
+                    family = "binomial")
+
+LASSOcv$medianTest
+
+nextTestSubjects <- rownames(LASSOcv$medianTest)[!(((LASSOcv$medianTest[,1] > 0) == (LASSOcv$medianTest[,2] >= 0)))]
+
+secondModel <- LASSO_1SE(Class ~.,Colon[nextTestSubjects,])
+
+colnames(Colon[,-1])[abs(as.numeric(coef(lm$fit, s = lm$s))) > 0];
+
+```
+

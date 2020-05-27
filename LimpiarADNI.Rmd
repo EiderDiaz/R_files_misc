@@ -1,0 +1,259 @@
+---
+title: "LimpiarADNI"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Cargar datos de la base de datos ADNI
+
+en DatosADNI vacio el csv y los ordena por RDI y EXAMDATE
+
+```{r cargar datos}
+DatosANDI <- read.delim("~/MCC/AD experiments/TADPOLE_D1_D2.csv",na.strings=c("NA","","#N/A","#DIV/0!"),sep = ",")
+DatosANDI <- DatosANDI[with(DatosANDI,order(RID,EXAMDATE)),]
+
+```
+
+
+## diferencia de fechas
+Añadir la fecha maxima y minima de cada observacion en una tabla nueva (maxmindates)
+restar maxima y minima para obtener los dias de diferencia
+y eliminar los que tienen 0 dias de diferencia
+
+```{r diferencia de fechas}
+
+prueba <- DatosANDI
+library(data.table)
+setDT(prueba)
+
+
+maxmindates <- prueba[,.(start=min(as.Date(EXAMDATE)),stop=max(as.Date(EXAMDATE))), by = .(RID)]
+#dias de diferencia
+maxmindates$date_diff <- as.Date(as.character(maxmindates$stop), format="%Y-%m-%d")-as.Date(as.character(maxmindates$start), format="%Y-%m-%d")
+maxDate<-max(as.Date(maxmindates$stop));
+#ELIMINO LOS QUE SOLO TIENEN BASELINE
+maxmindates<-maxmindates[-which(maxmindates$date_diff==0),];
+
+```
+
+
+## obtener baselineDeEvento y control cases 
+obtenemos los pacientes que tienen baseline con mci y baseline con control y con evento (AD) y combinamos aquellos cuyo RID este en ambos baselina y conevento
+
+```{r baseline y control}
+
+baseline <- subset(prueba,VISCODE=="bl" & DX=="MCI")
+#control
+control <- subset(prueba,VISCODE=="bl" & DX_bl=="CN")
+conEvento <- subset(prueba,DXCHANGE==5)
+#eliminar duplicados
+conEvento<-conEvento[!duplicated(conEvento$RID),]
+#combinar los baseline que tengas evento 
+baselineConEvento <- baseline[which(baseline$RID %in% conEvento$RID),]
+
+```
+
+
+## obtener una tabla (FechasDeEventYBL) con la fecha del baseline (FechasBaseline) y la fecha de la conversion a AD (FechasDeEvento)
+esta tabla contiene todos los baselines que tuvieron evento
+```{r FechasDeEventYBL }
+FechasBaseline <- baselineConEvento[,c("RID","EXAMDATE")]
+FechasDeEvento <- conEvento[,c("RID","EXAMDATE")]
+#cambiar el nombre de la columna examdate a BASELINEDATE
+colnames(FechasBaseline)<-c("RID","BASELINEDATE")
+
+FechasDeEventYBL <-merge(FechasDeEvento,FechasBaseline)
+FechasDeEventYBL[which(FechasDeEventYBL$EXAMDATE==FechasDeEventYBL$BASELINEDATE),]
+
+
+
+```
+
+
+
+
+## obtener una tabla timeToEvent 
+esta tabla contiene la resta de fechas para tener el timeToEvent
+```{r timeToEvent }
+#CALCULOS TIEMPOS DE LOS QUE TIENEN EVENTO
+timeToEvent <- cbind(RID=FechasDeEventYBL$RID,TimeToEvent=as.Date(as.character(FechasDeEventYBL$EXAMDATE),format="%Y-%m-%d")-as.Date(as.character(FechasDeEventYBL$BASELINEDATE), format="%Y-%m-%d"))
+#no se porque no lo hace arriba pero aqui la columna timetoevent se le cambia el nmobre a realtimetoevent
+colnames(timeToEvent)<-c("RID","realTimeToEvent")
+
+```
+
+## agregar a baseline los dias de diferencia el cual contiene la diferencia en dias de baseline a evento(timesofbaseline)
+```{r mergetimesofbaseline}
+
+mergeDatos <- merge(baseline,maxmindates,by = "RID")
+timesOfBaseline <- mergeDatos[,c("RID","date_diff")]
+
+colnames(timesOfBaseline) <- c("RID","timeToEvent");
+baseline<-merge(baseline,timesOfBaseline,by = "RID");
+
+baseline <- merge(baseline, timeToEvent,all.x = TRUE,by="RID")
+
+baseline$timeToEvent <- ifelse(is.na(baseline$realTimeToEvent), baseline$timeToEvent, baseline$realTimeToEvent)
+
+baseline$realTimeToEvent <- NULL
+```
+
+
+## status 
+inizializar status (si no se transofrmo en AD=0 y si si=1 )
+
+```{r statusAD}
+
+baseline$status <- 0
+# changing status
+baseline[which(baseline$RID %in% conEvento$RID),]$status<-1
+
+```
+
+
+## varnames MRI
+cargar el nombre de las features que son relevantes para el estudio
+y posteriormente selecionarlas de baseline junto ocn RID status y timetoevent
+```{r varnames}
+#varnames
+varnames <- read.delim("~/MCC/AD experiments/varnames.csv",sep=",")
+colnames(varnames)<-c("names","description")
+
+baseline<-as.data.frame(baseline);
+baselineSoloMRI <-baseline[,c("RID","status","timeToEvent",as.character(varnames$names))]
+
+```
+
+## Normalizar datos 
+obtengo las features con nombre y descripcion de datos de MRI que tienen valores de izquierda y derecha
+les quito de la descripcion la palabra left y right y las comparo para ver si son iguales
+```{r normalization 1}
+mriIzquierdas <- varnames[grep("Left",varnames$description),]
+mriIzquierdas$description <- gsub("Left","",mriIzquierdas$description)
+mriDerechas <- varnames[grep("Right",varnames$description),]
+mriDerechas$description <- gsub("Right","",mriDerechas$description)
+
+mergeMRI <- merge(mriIzquierdas, mriDerechas, by="description")
+varnames[which((!varnames$names %in% mergeMRI$names.x) & (!varnames$names %in% mergeMRI$names.y)),]
+
+```
+
+
+## calcular las diferencias y las sumas de los datos izquierdo y derecho para los data frame de baseline y controlcases
+
+```{r normalization 2}
+
+sujetos <- baselineSoloMRI
+for(i in 1:nrow(mergeMRI)) {
+  column = mergeMRI[i,]
+  diffLeftRight <- abs(sujetos[,as.character(column$names.x)]-sujetos[,as.character(column$names.y)])
+  sumLeftRight <- sujetos[,as.character(column$names.x)]+sujetos[,as.character(column$names.y)]
+  sujetos[,as.character(column$names.x)] <- diffLeftRight;
+  sujetos[,as.character(column$names.y)] <- sumLeftRight;
+}
+
+sujetosMCItoAD <- sujetos;
+#diferencias y sumas de cn
+sujetos <- as.data.frame(control)
+for(i in 1:nrow(mergeMRI)) {
+  column = mergeMRI[i,]
+  diffLeftRight <- abs(sujetos[,as.character(column$names.x)]-sujetos[,as.character(column$names.y)])
+  sumLeftRight <- sujetos[,as.character(column$names.x)]+sujetos[,as.character(column$names.y)]
+  sujetos[,as.character(column$names.x)] <- diffLeftRight;
+  sujetos[,as.character(column$names.y)] <- sumLeftRight;
+}
+sujetosNC <- sujetos;
+
+
+```
+
+
+## scale
+utliziando NCToScale como referencia escalaremos los features utilizando la funcion de scale de FRESA
+```{r scale features}
+
+#scale
+featuresToScale <- as.character(varnames$names)
+featuresToScale <- featuresToScale[-c(1,2)]
+MCIToADToScale <- sujetosMCItoAD[,featuresToScale]
+NCToScale <- sujetosNC[,featuresToScale]
+library(FRESA.CAD)
+scale <- FRESAScale(data=MCIToADToScale,refFrame = NCToScale,method = "RankInv")
+scaledData <- scale$scaledData
+#unir los datos escalados con id timetoevent status etc
+scaledData <- cbind(sujetosMCItoAD[,c("RID","timeToEvent","status","PTGENDER","APOE4")],scaledData)
+
+```
+
+## eliminar los que esten sin la mitad de datos
+```{r scale features}
+#los que tengan la mitad vacia
+baselineSoloMRISinColumnasNA<-scaledData[,colSums(is.na(scaledData))<(0.5*nrow(scaledData))]
+#si tienen puro NA (sin contar ID,status etc) se eliminan
+sujetosSinTodoNA<-baselineSoloMRISinColumnasNA[rowSums(is.na(baselineSoloMRISinColumnasNA))<309,]
+
+
+#cambio genero para impute
+sujetosSinTodoNA$PTGENDER<- gsub("Male",1,sujetosSinTodoNA$PTGENDER)
+sujetosSinTodoNA$PTGENDER<- gsub("Female",2,sujetosSinTodoNA$PTGENDER)
+sujetosSinTodoNA$PTGENDER<-as.numeric(sujetosSinTodoNA$PTGENDER)
+
+
+```
+
+## rellenar los knn de fresa los campos vacios 
+```{r knn imputed}
+baselineImputed <-  nearestNeighborImpute(sujetosSinTodoNA)
+baselineImputed <- as.data.frame(baselineImputed)
+#guardo los RID en un array
+RIDS <- baselineImputed[,1]
+#asigno el nombre de la columna el id
+rownames(baselineImputed)<-RIDS
+#elimino el feature RID
+baselineImputed <- baselineImputed[,-c(1)]
+fnames <- colnames(baselineImputed)[-c(1,2)]
+#quitar las columnas que tengan corelacion 
+columnsNotCorralated <- correlated_Remove(baselineImputed, fnames=fnames, thr=0.7)
+baselineImputedNoCorrelated<-baselineImputed[,c("status","timeToEvent",as.character(columnsNotCorralated))]
+
+```
+
+## entrenar el modelo con lasso 
+```{r train_Lasso}
+#firstLasoModel <- LASSO_1SE(status ~.,baselineImputedNoCorrelated)
+LASSOcv <- randomCV(baselineImputedNoCorrelated,"status",
+                    LASSO_1SE,trainFraction = 0.8,
+                    repetitions = 75,
+                    family = "binomial")
+
+#creo un dataframe con los outcome del modelo creado en LASSOCV
+LASSOcvPredictedValues <- as.data.frame(LASSOcv$medianTest)
+#ordenar por rowname para tenerlos igual que el df baseline
+LASSOcvPredictedValues <- LASSOcvPredictedValues[order(as.numeric(row.names(LASSOcvPredictedValues))),]
+#lo convierto a data table y le agrego la columna rn que contiene los rownames
+setDT(LASSOcvPredictedValues, keep.rownames = TRUE)[]
+#creo un data frame con los samples mal clasificados 
+LASSOCV_missclasified <- ifelse(baselineImputedNoCorrelated$status==LASSOcvPredictedValues$Outcome,LASSOcvPredictedValues$rn,"NA")
+
+#outcomeHigherThanCero <- LASSOcv$medianTest[,1] > 0
+#medianHigerThanCero <- LASSOcv$medianTest[,2] >= 0 
+nextTestSubjects <-rownames(LASSOcv$medianTest)[!(((LASSOcv$medianTest[,1] > 0) == (LASSOcv$medianTest[,2] >= 0 )))]
+
+
+#secondModel <- LASSO_1SE(status ~.,baselineImputed[nextTestSubjects,])
+#nextTestSubjects
+
+#LASSOcvSecond <- randomCV(baselineImputed[nextTestSubjects,],"status",
+#                    LASSO_1SE,trainFraction = 0.8,
+ #                   repetitions = 75,
+  #                  family = "binomial")
+## aqui que?
+#colnames(baselineImputed[,-1])[abs(as.numeric(coef(lm$fit, s = lm$s))) > 0];
+```
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

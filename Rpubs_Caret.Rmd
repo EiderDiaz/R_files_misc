@@ -1,0 +1,265 @@
+---
+title: "Caret-FRESA_CAD"
+author: "eider"
+date: "2/21/2020"
+output: html_document
+---
+
+```{r setup}
+#install.packages("fastAdaboost")
+
+#install.packages("gbm")
+#install.packages("caret")
+#install.packages("doParallel")
+
+
+
+library(FRESA.CAD)
+library(mlbench)
+library(fastAdaboost)
+library(gbm)
+library(caret)
+library(doParallel)
+cl <- makePSOCKcluster(6)
+registerDoParallel(cl)
+
+```
+
+
+```{r Loading the data from the mlbech package}
+data(Sonar, package = "mlbench")
+Sonar$Class <- 1*(Sonar$Class == "M")
+table(Sonar$Class)
+
+```
+
+#We will set the experiment name. The number of times that the experiment will be carried out. And the training fraction
+```{r}
+SonarF <- Sonar
+SonarF$Class <- as.factor(SonarF$Class)
+
+# FRESA way de expresar los attrs del experimento a correr
+ExperimentName <- "Sonar_Caret"
+theData <- Sonar;
+theOutcome <- "Class";
+reps <- 20;
+fraction <- 0.75;
+#creacion de train y test set
+tranSet <- sample(nrow(SonarF),fraction*nrow(SonarF))
+sonarTrain <- SonarF[tranSet,]
+sonarTest <- SonarF[-tranSet,]
+
+sonarNTrain <- Sonar[tranSet,]
+sonarNTest <- Sonar[-tranSet,]
+
+CVFileName <- paste(ExperimentName,"CVMethod_CARET_web.RDATA",sep = "_")
+
+```
+
+
+
+```{r Caret taining control}
+#5 cvs repeteados
+tunningctrl <- trainControl(
+  method = "repeatedcv", 
+  number = 5,
+  repeats = 3
+)
+#uno sin tuning
+noTuningControl <- trainControl(method = "none")
+```
+
+
+```{r  Simple hold-out validation of caret methods}
+set.seed(42)
+
+sonarTrain$Class
+gbm_fit <- train(Class ~ .,sonarTrain, 
+             method = "gbm",  
+             trControl = tunningctrl,
+             preProc = c("center", "scale"),
+             verbose = FALSE)
+
+
+avNNet_fit <- train(Class ~ .,sonarTrain, 
+             method = "avNNet",
+             trControl = tunningctrl,
+             trace = FALSE
+             )
+
+lda2_fit <- train(Class ~ .,sonarTrain, 
+             method = "lda2",
+             trControl = tunningctrl
+             )
+
+
+mda_fit <- train(Class ~ .,sonarTrain, 
+             method = "mda",
+             trControl = tunningctrl
+             )
+
+
+```
+
+#crea un latent class para compararlo contra los de caret
+```{r 1.4.1 Compare to FRESA.CAD latent class modeling}
+
+class(sonarNTrain$Class)	
+sonarNTrain$Class
+sonarNTrain
+LCmodel <- HLCM_EM(Class ~ .,sonarNTrain,hysteresis = 0.0)
+
+```
+
+
+
+```{r 1.4.2 ROC Plots and performance}
+# par(mfrow = c(2,2),cex = 0.6);
+
+gbm_bs <- predictionStats_binary(cbind(as.numeric(as.character(sonarTest$Class)),
+                                   predict(gbm_fit,sonarTest,type="prob")[,"1"]),
+                                 "caret gbm",
+                                 cex=0.8)
+#> caret gbm
+avNNet_bs <- predictionStats_binary(cbind(as.numeric(as.character(sonarTest$Class)),
+                                   predict(avNNet_fit,sonarTest,type="prob")[,"1"]),
+                                   "caret avNNet",
+                                   cex=0.8)
+#> caret avNNet
+lda2_bs <- predictionStats_binary(cbind(as.numeric(as.character(sonarTest$Class)),
+                                   predict(lda2_fit,sonarTest,type="prob")[,"1"]),
+                                  "caret lda2",
+                                  cex=0.8)
+#> caret lda2
+mda_bs <- predictionStats_binary(cbind(as.numeric(as.character(sonarTest$Class)),
+                                   predict(mda_fit,sonarTest,type="prob")[,"1"]),
+                                 "caret Mixture Discriminant Analysis",
+                                 cex=0.8)
+#> caret Mixture Discriminant Analysis
+
+```
+
+
+```{r}
+HLCM_EM_bs <- predictionStats_binary(cbind(sonarNTest$Class,
+                                   predict(LCmodel,sonarNTest)),
+                                   "Latent Class Model",
+                                   cex=0.8)
+#> Latent Class Model
+```
+
+
+```{r plot the results }
+model_list <- list(gbm = gbm_fit, 
+     avNNet = avNNet_fit,
+     lda2=lda2_fit,
+     mda=mda_fit
+     )
+
+resamps <- resamples(model_list)
+#pander::pander(summary(resamps))
+#bwplot(resamps, metric = "AUC")
+#dotplot(resamps, metric = "ROC")
+#densityplot(resamps, metric = "AUC")
+plot(gbm_fit)
+plot(avNNet_fit)
+plot(mda_fit)
+
+summary.resamples(object = resamps)
+```
+
+
+
+
+```{r}
+HouldOutaccuracys <- rbind(gbm = gbm_bs$accc, 
+                           avNNet = avNNet_bs$accc,
+                           lda2=lda2_bs$accc,
+                           mda=mda_bs$accc,
+                           HLCM_EM=HLCM_EM_bs$accc)
+
+pander::pander(HouldOutaccuracys)
+```
+
+```{r 1.5 FRESA.CAD Cross-validation of Caret methods}
+#par(mfrow = c(2,2),cex = 0.6);
+
+
+
+caretlda2cv <- randomCV(theData,theOutcome,
+                  train,
+                  trainFraction = fraction,
+                  repetitions = reps,
+                  asFactor = TRUE,  
+                  method = "lda2",
+                  preProc = c("center", "scale"),
+                  featureSelectionFunction = univariate_Wilcoxon,
+                  featureSelection.control = list(thr = 0.95,limit=0.1)
+                  )
+
+
+
+
+caregbmcv <- randomCV(fittingFunction=train,
+                  trainSampleSets=caretlda2cv$trainSamplesSets,
+                  asFactor = TRUE,
+                  method = "gbm",
+                  verbose = FALSE
+                  )
+
+
+careavNNetcv <- randomCV(fittingFunction=train,
+                  trainSampleSets=caretlda2cv$trainSamplesSets,
+                  asFactor = TRUE,
+                  method = "avNNet",
+                  trControl = tunningctrl,
+                  trace = FALSE
+                  )
+
+
+caregbmNocv <- randomCV(fittingFunction=train,
+                  trainSampleSets=caretlda2cv$trainSamplesSets,
+                  asFactor = TRUE,
+                  method = "gbm",
+                  trControl = noTuningControl,
+                  tuneGrid = data.frame(interaction.depth = 3,
+                                       n.trees = 75,
+                                       shrinkage = .1,
+                                       n.minobsinnode = 20),
+                  verbose = FALSE
+                  )
+
+
+ADABOOSTcv <- randomCV(fittingFunction=adaboost,
+                  trainSampleSets=caretlda2cv$trainSamplesSets,
+                  featureSelectionFunction = univariate_Wilcoxon,
+                  featureSelection.control = list(thr = 0.95),
+                  asFactor = TRUE,
+                  nIter=10
+)
+
+
+HCLAS_BSWiMScv <- randomCV(fittingFunction=HLCM_EM,
+                   trainSampleSets=caretlda2cv$trainSamplesSets,hysteresis = 0.10)
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

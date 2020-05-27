@@ -1,0 +1,143 @@
+---
+title: "airquality"
+author: "eider"
+date: "3/4/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+
+data(airquality)
+getwd()
+
+```
+```{r}
+str(airquality)
+```
+
+
+
+
+```{r}
+plot(airquality$Ozone)
+
+
+```
+
+
+```{r}
+plot(airquality$Ozone, airquality$Wind)
+
+```
+
+
+```{r}
+
+
+plot(airquality)
+
+```
+
+```{r}
+# points and lines 
+ plot(airquality$Ozone, type= "b")
+```
+
+
+
+```{r}
+# high density vertical lines.
+ plot(airquality$Ozone, type= "h")
+```
+
+
+```{r}
+plot(airquality$Ozone, xlab = 'ozone Concentration', ylab = 'No of Instances', main = 'Ozone levels in NY city', col = 'green')
+```
+
+
+```{r}
+ barplot(airquality$Ozone, main = 'Ozone Concenteration in air',xlab = 'ozone levels', col= 'green',horiz = TRUE)
+
+```
+
+
+```{r}
+
+# Vertical bar plot
+
+barplot(airquality$Ozone, main = 'Ozone Concenteration in air',xlab = 'ozone levels', col='red',horiz = FALSE)
+```
+
+
+
+
+```{r}
+data("mtcars")
+
+install.packages("ggpubr")
+library(ggpubr)
+ggpubr(mtcars, x="mpg",y="wt",add="reg.line", conf.int=TRUE, cor.method="pearson"
+       )
+
+
+plot(mtcars$mpg)
+
+```
+
+
+
+
+
+
+```{r}
+library(dplyr)
+PATH <- "https://raw.githubusercontent.com/guru99-edu/R-Programming/master/poisons.csv"
+
+df <- read.csv(PATH) %>%
+  select(-X) %>%
+  mutate(poison = factor(poison, ordered = TRUE))
+glimpse(df)
+
+
+ggplot(df, aes(x=poison, y= time, fill= poison ))+
+  geom_boxplot()+
+  geom_jitter( shape=15,
+               color= "steelblue",
+               position = position_jitter(0.21)
+    
+  )+
+  theme_classic()
+  
+  
+
+  
+```
+
+
+```{r}
+
+anova_one_way <- aov(time ~ poison , df)
+summary(anova_one_way)
+TukeyHSD(anova_one_way)
+
+```
+
+```{r}
+anova_two_way <- aov(time ~ poison + treat , df)
+summary(anova_two_way)
+
+TukeyHSD(anova_two_way)
+
+```
+

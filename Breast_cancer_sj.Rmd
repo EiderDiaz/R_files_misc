@@ -1,0 +1,184 @@
+---
+title: "Breast_cancer_sj.Rmd"
+author: "eider"
+date: "2/28/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load dataset}
+library(dplyr)
+library(ggplot2)
+library(readr)
+# Import the dataset and convert variables
+
+getwd()
+
+BRCASanJose <- read_csv("../datasets/breast-cancer/BRCASanJose.csv", 
+                    col_types = cols(recurrence = col_factor()))
+
+#str(BRCASanJose)
+
+#change from char to numeric in order to perform further calculations
+# unique(BRCASanJose$Protocol)
+BRCASanJose$Protocol <- 1* (BRCASanJose$Protocol == "Combo")
+#unique(BRCASanJose$Type) 
+BRCASanJose$Type <- 1* (BRCASanJose$Type == "Unilateral")
+
+#now we can see only numeric data
+str(BRCASanJose)
+
+
+```
+
+
+```{r}
+set.seed(42)
+BRCASanJose_F <- BRCASanJose #leave one factor class
+BRCASanJose$recurrence <-as.numeric(BRCASanJose$recurrence) #set one numeric class 
+
+# data to for further calculations
+theData <- BRCASanJose;
+theOutcome <- "recurrence";
+reps <- 20;
+fraction <- 0.75;
+
+#split the dataset
+tranSet <- sample(nrow(BRCASanJose_F),fraction*nrow(BRCASanJose_F))
+#FACTOR PARTITION
+BRCASanJoseTrain <- BRCASanJose_F[tranSet,]
+BRCASanJoseTest <- BRCASanJose_F[-tranSet,]
+#NUMERIC PARTITION
+BRCASanJoseNTrain <- BRCASanJose[tranSet,] 
+BRCASanJoseNTest <- BRCASanJose[-tranSet,]
+
+
+
+```
+
+#Caret taining control
+```{r}
+
+library(caret)
+tunningctrl <- trainControl(
+  method = "repeatedcv", 
+  number = 5,
+  repeats = 3,
+  savePredictions = "all"
+)
+
+noTuningControl <- trainControl(method = "none")
+```
+
+#Simple hold-out validation of caret methods
+
+```{r}
+set.seed(42)
+library(gbm)
+gbm_fit <- train(recurrence ~ .,BRCASanJoseTrain, 
+             method = "gbm",  
+             trControl = tunningctrl,
+             preProc = c("center", "scale"),
+             verbose = FALSE)
+
+lda2_fit <- train(recurrence ~ .,BRCASanJoseTrain, 
+             method = "lda2",
+             preProc = c("center", "scale"),
+             trControl = tunningctrl
+             )
+
+
+
+
+#ANN 
+
+#apply some feature filter to the data so the nnet can model
+avNNet_fit <- train(recurrence ~ .,BRCASanJoseTrain, 
+             method = "avNNet",
+             trControl = tunningctrl,
+             preProc = c("center", "scale"),
+             trace = FALSE,
+             )
+
+mda_out <- mda(recurrence ~ ., data = BRCASanJoseTrain)
+
+mda_fit <- train(recurrence ~ .,BRCASanJoseTrain, 
+             method = "mda",
+             preProc = c("center", "scale"),
+             trControl = tunningctrl
+             )
+mda_fit$results
+
+#DECISTION TREES
+
+#SVM
+
+#BAYESIAN
+
+
+#ENSEMBLE
+
+```
+
+```{r}
+
+class(BRCASanJoseNTrain$recurrence)
+str(BRCASanJoseNTrain)
+
+library(FRESA.CAD)
+install.packages("FRESA.CAD")
+LCmodel <- HLCM_EM(recurrence ~ .,BRCASanJoseNTrain,hysteresis = 0.0)
+
+
+```
+
+
+```{r}
+gbm_bs <- predictionStats_binary(cbind(as.numeric(as.character(BRCASanJoseTest$recurrence)),
+                                   predict(gbm_fit,BRCASanJoseTest,type="prob")[,"1"]),
+                                 "caret gbm",cex=0.8)
+
+lda2_bs <- predictionStats_binary(cbind(as.numeric(as.character(BRCASanJoseTest$recurrence )),
+                                   predict(lda2_fit,BRCASanJoseTest,type="prob")[,"1"]),
+                                  "caret lda2",cex=0.8)
+
+
+```
+
+
+```{r}
+
+resamps <- resamples(list(gbm = gbm_fit, avNNet = avNNet_fit,lda2=lda2_fit,mda_fit))
+pander::pander(summary(resamps))
+
+```
+
+
+
+```{r}
+caretlda2cv <- randomCV(theData,theOutcome,
+                  train,
+                  trainFraction = fraction,
+                  repetitions = reps,
+                  asFactor = TRUE,  
+                  method = "lda2",
+                  preProc = c("center", "scale"),
+                  featureSelectionFunction = univariate_Wilcoxon,
+                  featureSelection.control = list(thr = 0.95,limit=0.1)
+                  )
+
+
+caregbmcv <- randomCV(fittingFunction=train,
+                  trainSampleSets=caretlda2cv$trainSamplesSets,
+                  asFactor = TRUE,
+                  method = "gbm",
+                  verbose = FALSE
+                  )
+
+
+
+```
+

@@ -1,0 +1,357 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+
+library(FRESA.CAD)
+library(mlbench)
+library(fastAdaboost)
+library(gbm)
+library(caret)
+
+```
+
+
+
+```{r}
+data(Sonar, package = "mlbench")
+
+```
+
+
+
+
+```{r}
+SonarF <- Sonar
+SonarF$Class <- as.factor(SonarF$Class)
+
+#creacion de train y test set
+
+set.seed(42)
+index <- createDataPartition(SonarF$Class,
+                             p = .75, 
+                             list = FALSE)
+sonarTrain <- SonarF[index,]
+sonarTest <- SonarF[-index,]
+
+sonarNTrain <- Sonar[index,]
+sonarNTest <- Sonar[-index,]
+
+```
+
+
+```{r Caret taining control}
+#5 cvs repeteados
+tunningctrl <- trainControl(
+  summaryFunction = twoClassSummary,
+  method = "repeatedcv", 
+  number = 5,
+  repeats = 3,
+  classProbs = TRUE
+)
+#uno sin tuning
+noTuningControl <- trainControl(method = "none")
+```
+
+```{r train caret models using repeated cv tunning control}
+#modelLookup(model)
+#class(sonarNTrain$Class)
+
+gbm_model_cv <- train(Class ~ .,
+            sonarTrain, 
+             method = "gbm",  
+             trControl = tunningctrl,
+             preProc = c("center", "scale"),
+             metric= "ROC",
+             verbose = FALSE)
+
+
+avNNet_model_cv <- train(Class ~ .,
+            sonarTrain, 
+             method = "avNNet",
+             metric= "ROC",
+             trControl = tunningctrl,
+             trace = FALSE
+             )
+
+
+lda2_model_cv <- train(Class ~ .,sonarTrain, 
+             method = "lda2",
+             metric= "ROC",
+             trControl = tunningctrl
+             )
+
+mda_model_cv <- train(Class ~ .,sonarTrain, 
+             method = "mda",
+             metric= "ROC",
+             trControl = tunningctrl
+              )
+
+
+
+#guardar los modelos en una lista y evaluar unos contra otros
+
+model_list <- list(gbm = gbm_model_cv, 
+     avNNet = avNNet_model_cv,
+     lda2=lda2_model_cv,
+     mda=mda_model_cv
+     )
+
+resamps <- resamples(model_list)
+#summary(resamps)
+
+#comparacion de metodos todos contra todos 
+dotplot(resamps, metric= "ROC")
+#bwplot(resamps, metric = "ROC")
+#densityplot(resamps, metric = "ROC")
+
+#plot(gbm_fit)
+#plot(gbm_fit,
+#     metric = "Kappa",
+#     plotType = "level")
+#
+```
+
+#Compare to FRESA.CAD latent class modeling
+```{r}
+#change to 1 and 0 inoder to use it in latent class analisys
+sonarNTrain$Class <- 1*(sonarNTrain$Class == "M")
+sonarNTest$Class <- 1*(sonarNTest$Class == "M")
+
+table(sonarNTest$Class)
+
+LCmodel <- HLCM_EM(Class ~ .,sonarNTrain,hysteresis = 0.0)
+
+HLCM_EM_bs <- predictionStats_binary(cbind(sonarNTest$Class,
+                                   predict(LCmodel,sonarNTest)),
+                                   "Latent Class Model",
+                                   cex=0.8)
+
+```
+
+#ROC Plots and performance of caret models
+```{r}
+
+
+tobinary <- 
+gbm_bs <- predictionStats_binary(cbind(
+                                 1*(as.character(sonarTest$Class)=="M"),
+                                 1*(predict(gbm_model_cv,sonarTest)=="M")
+                                 ),
+                                 "caret gbm",
+                                 cex=0.8)
+
+
+
+#> caret gbm
+avNNet_bs <- predictionStats_binary(cbind(
+                                    1*(as.character(sonarTest$Class)=="M"),
+                                    1*(predict(avNNet_model_cv,sonarTest)=="M")
+                                    ),
+                                   "caret avNNet",
+                                   cex=0.8)
+#> caret avNNet
+lda2_bs <- predictionStats_binary(cbind(
+                                    1*(as.character(sonarTest$Class)=="M"),
+                                    1*(predict(lda2_model_cv,sonarTest)=="M")
+                                       ),
+                                  "caret lda2",
+                                  cex=0.8)
+#> caret lda2
+mda_bs <- predictionStats_binary(cbind(
+                                  1*(as.character(sonarTest$Class)=="M"),
+                                  1*(predict(mda_fit,sonarTest)=="M")
+                                     ),
+                                 "caret Mixture Discriminant Analysis",
+                                 cex=0.8)
+#> caret Mixture Discriminant Analysis
+
+```
+
+
+
+
+```{r}
+
+HouldOutaccuracys <- rbind(gbm = gbm_bs$accc, 
+                           avNNet = avNNet_bs$accc,
+                           lda2=lda2_bs$accc,
+                           mda=mda_bs$accc,
+                           HLCM_EM=HLCM_EM_bs$accc)
+pander::pander(HouldOutaccuracys)
+
+```
+
+
+
+#FRESA.CAD Cross-validation of Caret methods
+```{r}
+
+Sonar$Class <- 1*(Sonar$Class == "M")
+theData <- Sonar;
+theOutcome <- "Class";
+reps <- 20;
+fraction <- 0.75;
+
+caretlda2cv <- randomCV(theData,
+                  theOutcome,
+                  train,
+                  trainFraction = fraction,
+                  repetitions = reps,
+                  asFactor = TRUE,  
+                  method = "lda2",
+                  preProc = c("center", "scale"),
+                  featureSelectionFunction = univariate_Wilcoxon,
+                  featureSelection.control = list(thr = 0.95,limit=0.1)
+                  )
+
+caregbmcv <- randomCV(fittingFunction=train,
+                  trainSampleSets=caretlda2cv$trainSamplesSets,
+                  asFactor = TRUE,
+                  method = "gbm",
+                  verbose = FALSE
+                  )
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+#gris parameters to gmb
+man_grid <-  expand.grid(n.trees = c(100, 200, 250),
+                         interaction.depth = c(1, 4, 6), 
+                         shrinkage = 0.1,
+                         n.minobsinnode = 10)
+
+
+
+#big grids
+big_grid <-  expand.grid(n.trees = seq(from = 10, to = 300, by = 50),
+                         interaction.depth = seq(from = 1, to = 10, length.out = 6), 
+                         shrinkage = 0.1,
+                         n.minobsinnode = 10)
+
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 3,
+                           repeats = 5,
+                           search = "grid")
+
+
+
+
+```
+
+```{r}
+#randomsearch hyperparameter
+
+
+fitControl <- trainControl(method = "repeatedcv",
+                           number = 3,
+                           repeats = 5,
+                           search = "random")
+
+gbm_model_voters_random <- train(turnout16_2016 ~ ., 
+                   data = voters_train_data, 
+                   method = "gbm", 
+                   trControl = fitControl,
+                   verbose = FALSE,
+                   tuneLength = 5) #at least 100
+
+
+```
+
+
+#Hyperparameter combinations are resampled with values near combinations that performed well.
+```{r Adaptive Resampling}
+
+fitControl <- trainControl(method = "adaptive_cv",
+                             number = 3,
+                             repeats = 3,
+                             adaptive = list(min = 2, #min number of resamples per hyperparameter
+                                             alpha = 0.05, #confidence level for removing hyperparameters
+                                             method = "gls", #method for resampling, use BT when HP are large
+                                             complete = TRUE), #full resample set
+                             search = "random")
+
+
+gbm_model_voters_adaptive <- train(turnout16_2016 ~ ., 
+                                   data = voters_train_data, 
+                                   method = "gbm", 
+                                   trControl = fitControl,
+                                   verbose = FALSE,
+                                   tuneLength = 7)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+

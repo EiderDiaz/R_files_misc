@@ -1,0 +1,135 @@
+---
+title: "DA_distributions"
+author: "eider"
+date: "3/11/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars}
+
+x <- seq(-10,10,by =.1)
+
+set.seed(0)
+y <- dnorm(x, mean = 0, sd = 1, log = FALSE)
+
+plot(x,y)
+
+
+y2<- pnorm(x, mean = 2.5, sd = 2)
+
+plot(x,y2)
+
+
+x2 <- seq()
+
+
+qnorm(p, mean = 0, sd = 1, lower.tail = TRUE, log.p = FALSE)
+
+rnorm(n, mean = 0, sd = 1)
+
+
+
+
+```
+
+
+
+
+```{r}
+
+library(readr)
+weight_height <- read_csv("C:/Users/eider/Dropbox/AD experiments/tutorials/DataCamp/Mixure models in R/weight-height.csv")
+View(weight_height)
+
+
+pop_mean <- mean(weight_height$Height)
+
+pop_sd <- sd(weight_height$Height)
+
+
+
+```
+
+
+```{r}
+x <- rnorm(10)
+y <- nrow(10)
+
+t.test(x,y)
+
+```
+
+
+
+```{r}
+
+set.seed(0)
+sc <- rnorm(60,mean=350,sd = 77)
+
+sc
+plot(sc)
+hist(sc)
+
+sm <- rnorm(60,mean =400 ,sd =80 )
+
+hist(sm)
+
+t.test(sc,sm)
+
+t.test(sc,sm, var.equal = TRUE)
+
+
+install.packages("BSDA")
+library(BSDA)
+
+z.test(sc,sm)
+
+
+```
+
+
+
+
+```{r}
+iq <- c(rnorm(75,102,15) )
+
+t.test(iq,mu=100)
+
+```
+
+
+
+
+
+```{r}
+
+install.packages("datarium")
+library(datarium)
+data("marketing", package = "datarium")
+
+head(marketing)
+
+
+library(ggplot2)
+ ggplot(marketing, aes(x = youtube, y =sales)) +
+   geom_point() +
+   stat_smooth()
+ 
+cor(marketing$youtube, marketing$sales, method = "spearman")
+
+
+ 
+
+model <- lm(sales~youtube, data = marketing)
+
+confint(model)
+
+
+```
+
+
