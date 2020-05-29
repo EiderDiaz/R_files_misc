@@ -30,7 +30,6 @@ table(datosDiagnosticoAlta$outcome)
 
 
 #spliting the dataset 
-- deberia de balancear mejor el split de train y test? 
 ```{r}
 set.seed(42)
 caseSet <- subset(datosDiagnosticoAlta,outcome==1)
@@ -137,6 +136,29 @@ get_next_sets_and_changes <- function(firstPredict,secondPredict,outcomedata,hys
 
 							
 }
+
+#xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+get_class_model <- function(classMethod,classData,
+                            selectedfeatures,Outcome,
+                            classModel.Control=NULL) {
+  
+  
+	if (is.null(classModel.Control))	{
+	  
+  	#classifico con classmethod (usually KNN) with the selected features and the classes form
+  	classModel <- classMethod(formula(paste(Outcome,"~.")),
+  					                               classData[,c(Outcome,selectedfeatures)]);
+  	}	else{
+  	  
+  				classModel <- do.call(classMethod,
+  				                      c(list(formula(paste(Outcome,"~.")),
+  				                      classData[,c(Outcome,selectedfeatures)]),
+  				                      classModel.Control));
+  				}
+				  
+  return(classModel)
+				  
+				}
 ```
 
 
@@ -148,13 +170,14 @@ hysteresis = 0.0
 classMethod=KNN_method
 classModel.Control=NULL
 minsize=10
-HLCM_EM <- function(formula = formula,
-                    data=NULL,
-                    method=BSWiMS.model,
-                    hysteresis = 0.0,
-                    classMethod=KNN_method,
-                    classModel.Control=NULL,
-                    minsize=10,...){
+
+ # HLCM_EM <- function(formula = formula,
+ #                   data=NULL,
+ #                   method=BSWiMS.model,
+ #                   hysteresis = 0.0,
+ #                   classMethod=KNN_method,
+ #                   classModel.Control=NULL,
+ #                   minsize=10,...){
   
 	if (class(formula) == "character"){
 		formula <- formula(formula);
@@ -165,8 +188,7 @@ HLCM_EM <- function(formula = formula,
 	dependent <- as.character(varlist[[2]])
 	#save the y in outome
 	Outcome = dependent[1];
-	if (length(dependent) == 3)
-	{
+	if (length(dependent) == 3)	{
 		Outcome = dependent[3];
 	}
 
@@ -190,14 +212,9 @@ HLCM_EM <- function(formula = formula,
 		warning("Error. Setting prediction to 0.5\n")
 		orgModel <- 0.5;
 	}
-	if (!is.null(orgModel$selectedfeatures)){ #si los selected features de orgmodel tienen algo
-		selectedfeatures <- orgModel$selectedfeatures;
-	} else{ #si si estan vacios
-		if (!is.null(orgModel$bagging)){ #si el baggin tiene algo
-		  #las selected features pasan a ser las elegidas en el frecuency table
-			selectedfeatures <- names(orgModel$bagging$frequencyTable); 
-		}
-	}
+	#function to get the features of the model
+	selectedfeatures <- get_model_features(orgModel)
+	
 	accuracy <- 1.0;
 	changes <- 1;
 	n=0;
@@ -205,6 +222,7 @@ HLCM_EM <- function(formula = formula,
 	classData[,Outcome] <- rep(0,nrow(classData));
 	sselectedfeatures <- colnames(data);
 	baseClass <- numeric();
+	
 	if (length(selectedfeatures) > 0){
 		#thePredict <- rpredict(orgModel,data);
 		thePredict <- predict(orgModel,data);
@@ -213,23 +231,16 @@ HLCM_EM <- function(formula = formula,
 		originalSet <- correct;
 		accuracy <- sum(correct)/nrow(data);
 		if (sum(1*(!correct),na.rm=TRUE) > minsize){ #si los missclassified mayores a minsize
-			outcomedata <- data[,Outcome];
-			falseP <- (thePredict >= (0.5 - hysteresis)) & (outcomedata == 0);
-			falseN <- (thePredict <= (0.5 + hysteresis)) & (outcomedata == 1);
-			secondSet <- falseP | falseN; #obtengo todos los misclasificados con histerisis
-			if ( sum(secondSet) > (2*nrow(data)/3) ){ #misclassificados penalizados > 2/3 data
-			  #entonces obtengo los false postitives and negatives normal
-				falseP <- (thePredict >= 0.5) & (outcomedata == 0);
-				falseN <- (thePredict <= 0.5) & (outcomedata == 1);
-			}
-			#calculo los true postives y negatives con la penalizacion de hysterisis
-			trueP <- (thePredict >= (0.5 - hysteresis)) & (outcomedata == 1);
-			trueN <- (thePredict <= (0.5 + hysteresis)) & (outcomedata == 0);
-			#saco todos los good clasified
-			firstSet <- trueP | trueN; 
+		  #falta devolver los false P
+		  originalSets <-get_originalSets(thePredict = thePredict ,
+		                                 outcomedata = outcomedata,
+		                                 hysteresis = hysteresis)
+		  
+		  firstSet <- originalSets$firstSet #goodclassified
+			secondSet <- originalSets$secondSet #missclassified
 			
-			if ((sum(falseP) >= (minsize/2)) 
-			    && (sum(falseN) >= (minsize/2))){ #si los true false positives > minsize/2
+			if ((sum(falseP) >= (minsize/2)) && (sum(falseN) >= (minsize/2))){ 
+			  #si los false positives/Negatives > minsize/2 (si el modelo puede mejorarse)
 				loops <- 0;
 				firstPredict <- thePredict;
 				while ((changes > 0) && (loops < 10)){
@@ -252,40 +263,27 @@ HLCM_EM <- function(formula = formula,
 						#secondModel <- method(formula,seconddata,...);
 						secondModel <- method(formula,seconddata);
 						nselected <- character();
+						nselected <- get_model_features(secondModel)
 						
-						if (!is.null(secondModel$selectedfeatures))	{
-							nselected <- secondModel$selectedfeatures;
-						} else{
-							if (!is.null(secondModel$bagging)) {
-							  #seleciona las features seleccionadas por el second model
-								nselected <- names(secondModel$bagging$frequencyTable);
-							}
-						}
 						if (length(nselected) > 0){ #si las features selecionadas por el segundo modelo >0
 							n <- 2;
 							#firstPredict <- rpredict(firstModel,data);
 							firstPredict <- predict(firstModel,data);
 							#secondPredict <- rpredict(secondModel,data);
 							secondPredict <- predict(secondModel,data);
-							#manhatan distance de eror entre mas grande el valor peor 
-							#distancia entre predicted y outcome 
-							d1 <-  abs(firstPredict - outcomedata);
-							d2 <-  abs(secondPredict - outcomedata);
+						
+							nextSets <- get_next_sets_and_changes(firstPredict = firstPredict,
+							                          secondPredict =secondPredict,
+							                          outcomedata = outcomedata,
+							                          hysteresis =  hysteresis)
+						  firstSet<- nextSets$firstSet
+						  secondSet <- nextSets$secondSet
+						  changes <-nextSets$changes
 							
-							#obtiene las observaciones que tienen menos error que el segundo classificador
-							#good classified respectively the second model
-							nfirstSet <- (d1 <= (d2 + hysteresis));
-							firstSet <- nfirstSet;#firstset contiene los goodclassified
-							#sum of observations classified DIFFERENT as the previous GOOD CLASSIFIED model
-							changes <- sum(nfirstSet != firstSet);
-							#observatiions classified better for the second model than the first model
-							nsecondSet <- (d2 <= (d1 + hysteresis));
-							changes <- changes + sum(nsecondSet != secondSet);
-							secondSet <- nsecondSet;
-						}
-						#end if both tables contain both outcome labels and the smaller outcome label > minsize	
-					}       else { #basicamente si se pueden creear modelos con los splits de GC Y MC, si no:
-						if ((sum(secondSet) > minsize))	{
+						}	
+					}  else { #si NO se pueden creear modelos con los splits de GC Y MC
+						##fail safe 
+					  if ((sum(secondSet) > minsize))	{
 							n <- 2;
 							secondModel <- sum(seconddata[,Outcome])/nrow(seconddata);
 							secondPredict <- rpredict(secondModel,data);
@@ -294,28 +292,32 @@ HLCM_EM <- function(formula = formula,
 						else{
 							secondModel <- 0.5;
 						}
+					  #end failsafe
 					}
-					if (sum(secondSet) == 0)	{ # si 
+					
+					if (sum(secondSet) == 0)	{ 
 						changes <- 0;
 						secondModel <- 0.5;
 					}
+					#end failsafe
+					
 					#numero de cambios totales de clase 
 					cat("(",changes,")");
 				} #end while
 				
-#				cat("[",sum(secondSet),"]")
 				#despues de todas las vueltas del while y los clasificadores convergan de alguna forma
-				if (n > 0)	{ #no recuerdo que media n
-					firstPredict <- rpredict(firstModel,data);
-					secondPredict <- rpredict(secondModel,data);
+				if (n > 0)	{ #converges MC and GC by Hysteresis
+					firstPredict <- predict(firstModel,data);
+					secondPredict <- predict(secondModel,data);
 					d0 <-  abs(thePredict - outcomedata);
 					d1 <-  abs(firstPredict - outcomedata);
 					d2 <-  abs(secondPredict - outcomedata);
+					#sets of good (True) or miss (Flase) misclassified
 					firstSet <- (d1 < 0.5);
 					secondSet <- (d2 < 0.5);
 					originalSet <- (d0 < 0.5);
 
-#					cat("[",sum(!firstSet),"]")
+          #cat("[",sum(!firstSet),"]")
 					alternativeModel[[1]] <- firstModel;
 					alternativeModel[[2]] <- secondModel;
 					errorSet <- (d1 >= 0.5) & (d2 >= 0.5);
@@ -324,40 +326,30 @@ HLCM_EM <- function(formula = formula,
 					baseClass <- c(0,0,0,0);
 					cat("<",sum(originalSet),",",sum(firstSet),",",sum(secondSet),",",sum(errorSet),">") 
 					nselected <- character();
-					if (sum(errorSet) > minsize)
-					{
+					
+					if (sum(errorSet) > minsize) {#if the observations MC by both models > minsize
 						cat("%",sum(errorSet),"%")
-						errordata <- data[errorSet,c(Outcome,selectedfeatures)];
-						tb <- table(errordata[,Outcome]);
-						if ((length(tb) > 1) && (min(tb) > (minsize/2)))
-						{
-							lastModel <- method(formula,errordata,...);
-							if (!is.null(lastModel$selectedfeatures))
-							{
-								nselected <- lastModel$selectedfeatures;
-							}
-							else
-							{
-								if (!is.null(lastModel$bagging))
-								{
-									nselected <- names(lastModel$bagging$frequencyTable);
-								}
-							}
-							if (length(nselected) > 0)
-							{
+					  #subset missclass by both models and filtered features by the orgmodel
+						errordata <- data[errorSet,c(Outcome,selectedfeatures)];  
+						tb <- table(errordata[,Outcome]);#count of each outcome variable
+						if ((length(tb) > 1) && (min(tb) > (minsize/2)))	{ #if i can create a model
+							lastModel <- method(formula,errordata);
+							nselected <- get_model_features(lastModel)
+							
+							if (length(nselected) > 0)	{ #if the selected features from the lastmodel > 0
 								n = 3;
 								alternativeModel[[3]] <- lastModel;
 							}
-						}
-						else
-						{
+						}	else {# if we cannot create a model with the errorset (MC by both)
 							n = 3;
 							alternativeModel[[3]] <- sum(errordata[,Outcome])/nrow(errordata);
 						}
-					}
-				}
-			}	else {
-				sumsecond <- sum(secondSet)
+					}#end creation of errorsetmodel (LASTMODEL)
+					
+				}#end n>0
+			}
+			else { # si los true/false positives NO son mayores a minsize/2 (si el modelo original es bueno)
+				sumsecond <- sum(secondSet) #number of original missclassified
 				if (sumsecond > minsize) {
 					n <- 2;
 					alternativeModel[[1]] <- firstModel;
@@ -378,85 +370,52 @@ HLCM_EM <- function(formula = formula,
 					cat("<<",sum(originalSet),",",sum(firstSet),",",sum(secondSet),",",sum(errorSet),">>") 
 				}
 			}
-			if (n > 0)
-			{
+			
+			if (n > 0)	{
 				nselected <- character();
-				if (class(firstModel)[1] != "numeric")
-				{
-					if (!is.null(firstModel$selectedfeatures))
-					{
-						nselected <- firstModel$selectedfeatures;
-					}
-					else
-					{
-						if (!is.null(firstModel$bagging))
-						{
-							nselected <- names(firstModel$bagging$frequencyTable);
-						}
-					}
+				if (class(firstModel)[1] != "numeric"){
+				  nselected <-get_model_features(firstModel)
+				  #concat the features
 					selectedfeatures <- c(selectedfeatures,nselected);
 				}
 				nselected <- character();
-				if (class(secondModel)[1] != "numeric")
-				{
-					if (!is.null(secondModel$selectedfeatures))
-					{
-						nselected <- secondModel$selectedfeatures;
-					}
-					else
-					{
-						if (!is.null(secondModel$bagging))
-						{
-							nselected <- names(secondModel$bagging$frequencyTable);
-						}
-					}
+				if (class(secondModel)[1] != "numeric")	{
+				  nselected <- get_model_features(secondModel)
 					selectedfeatures <- c(selectedfeatures,nselected);
 				}
+				#get the features of first + second model
 				selectedfeatures <- unique(selectedfeatures);
+				#to this point class data hasnt been modified
+				#originalset is the originial goodclassified 
 				classData[,Outcome] <- 2*originalSet + outcomedata;
 				classData[,Outcome] <- as.factor(classData[,Outcome]);
-				if (is.null(classModel.Control))
-				{
-					classModel[[1]] <- classMethod(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]);
-				}
-				else
-				{
-					classModel[[1]] <- do.call(classMethod,c(list(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]),classModel.Control));
-				}
+				table(classData$outcome)
+				classModel[[1]] <- get_class_model(classMethod =classMethod,classData = classData,
+				                   selectedfeatures = selectedfeatures, Outcome = Outcome,
+				                   classModel.Control =classModel.Control )
+			
+				
 				classData[,Outcome] <- 2*firstSet + outcomedata;
 				classData[,Outcome] <- as.factor(classData[,Outcome]);
-				if (is.null(classModel.Control))
-				{
-					classModel[[2]] <- classMethod(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]);
-				}
-				else
-				{
-					classModel[[2]] <- do.call(classMethod,c(list(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]),classModel.Control));
-				}
-				if (n > 1)
-				{
+				
+				classModel[[2]] <- get_class_model(classMethod =classMethod,classData = classData,
+				                   selectedfeatures = selectedfeatures, Outcome = Outcome,
+				                   classModel.Control =classModel.Control )
+				if (n > 1)	{
 					classData[,Outcome] <- 2*secondSet + outcomedata;
 					classData[,Outcome] <- as.factor(classData[,Outcome]);
-					if (is.null(classModel.Control))
-					{
-						classModel[[3]] <- classMethod(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]);
-					}
-					else
-					{
-						classModel[[3]] <- do.call(classMethod,c(list(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]),classModel.Control));
-					}
-					if ( n > 2)
-					{
+					
+					classModel[[3]] <- get_class_model(classMethod =classMethod,classData = classData,
+				                   selectedfeatures = selectedfeatures, Outcome = Outcome,
+				                   classModel.Control =classModel.Control )
+					if ( n > 2)	{
 						classData[,Outcome] <- 2*errorSet + outcomedata;
 						classData[,Outcome] <- as.factor(classData[,Outcome]);
-						if (is.null(classModel.Control))
-						{
-							classModel[[4]] <- classMethod(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]);
-						}
-						else
-						{
-							classModel[[4]] <- do.call(classMethod,c(list(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]),classModel.Control));
-						}
+						
+						classModel[[4]] <- get_class_model(classMethod =classMethod,classData = classData,
+				                   selectedfeatures = selectedfeatures, Outcome = Outcome,
+				                   classModel.Control =classModel.Control )
+						
 					}
 				}
 				classData[,Outcome] <- numeric(nrow(classData));
@@ -464,9 +423,7 @@ HLCM_EM <- function(formula = formula,
 				classData[firstSet,Outcome] <- classData[firstSet,Outcome] + 2;
 				classData[secondSet,Outcome] <- classData[secondSet,Outcome] + 4;
 				classData[errorSet,Outcome] <- classData[errorSet,Outcome] + 8;
-			}
-			else
-			{
+			}	else		{
 				alternativeModel <- list();
 			}
 		}
@@ -486,7 +443,7 @@ HLCM_EM <- function(formula = formula,
 					)
 	class(result) <- "FRESA_HLCM"
 	return(result);
-}
+
 
 
 
