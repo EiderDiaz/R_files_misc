@@ -1,0 +1,141 @@
+---
+title: "BRCA_LCA"
+author: "eider"
+date: "5/28/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library("FRESA.CAD")
+library(epiR)
+library(clValid)
+library(mclust)
+
+```
+
+#load the BRCA san jose Data
+```{r}
+#save(lesionsSumDiffRed,file="lesionsSumDiffRed.RDATA")
+load(lesionsSumDiffRed)
+
+table(lesionsSumDiffRed$Recurence)
+glimpse
+
+```
+
+##just as a comparison it is modeled with BSWISMS
+it is depicted its ROC and the top 20 selected features proportion over 1000 CV runs
+```{r}
+
+#BSWiMScv <- randomCV(lesionsSumDiffRed,
+#                     "Recurence",
+#                     fittingFunction = BSWiMS.model,
+#                     trainFraction = trainFraction,
+#                     repetitions = 1000,
+#                     NumberofRepeats = 1)
+load("./BSWiMScv.RDATA")
+#ROC
+par(op)
+bs <- predictionStats_binary(BSWiMScv$medianTest,"BSWiMS")
+#TOP 20 FEATURES
+par(mar=c(4,10,4,4),pty="m")
+barplot(BSWiMScv$featureFrequency[20:1]/Repeats,
+        xlim=c(0,1),
+        las=2,
+        cex.names =0.70,
+        horiz = TRUE,
+        main="Top Selected Radiomic Features over BRCA San Jose Dataset",
+        xlab="Selection Frequency")
+
+```
+
+#create LCA model  
+```{r}
+
+BRCA_DEFAULT <- HLCM_EM(Recurence ~ .,
+                      lesionsSumDiffRed,
+                      hysteresis = 0.1)
+
+
+PRD_BBRCA_DEFAULT <-  predict(BRCA_DEFAULT,lesionsSumDiffRed)
+
+lattentclass <- apply(attr(PRD_BBRCA_DEFAULT,"probabilities"),1,which.max)
+
+cat("Lattent Classes found: ",length(unique(lattentclass)))
+
+############## HLCM_EM with Lasso_1SE as model and SVM as classMethod
+
+BRCA_LASSO.SVM <- HLCM_EM(Recurence ~ .,
+                   lesionsSumDiffRed,
+                   hysteresis = 0.1,
+                   method=LASSO_1SE,
+                   classMethod=e1071::svm,
+                   classModel.Control=list(probability = TRUE),
+                   family="binomial")
+
+
+PRD_BRCA_LASSO.SVM <-  predict(BRCA_LASSO.SVM,lesionsSumDiffRed)
+
+lattentclass <- apply(attr(PRD_BRCA_LASSO.SVM,"probabilities"),1,which.max)
+
+cat("Lattent Classes found: ",length(unique(lattentclass)))
+```
+
+
+
+## The cluter wrappers for HLCM_EM
+```{r}
+latentClass <- function(data,formula,...)
+{
+  HLCM_EMM <- HLCM_EM(formula,data,...);
+  result <- list(model=HLCM_EMM )
+  class(result) <- "latentClass"
+  return (result)
+}
+
+predict.latentClass <- function(model,data)
+{
+  testResult <-  predict(model$model,data)
+  latentclass <- apply(attr(testResult,"probabilities"),1,which.max)
+  result <- list(classification =
+                   2*latentclass + 1*(testResult >= 0.5),
+                 outcome=testResult,
+                 latentclass=latentclass)
+#  result <- list(classification = latentclass,outcome=testResult,latentclass=latentclass)
+  return(result)
+}
+
+```
+
+
+```{r}
+LCA_Default <- latentClass(lesionsSumDiffRed,
+              formula = Recurence ~ .,
+              hysteresis = 0.10)
+
+prd_LCA_Default <- predict(LCA_Default,lesionsSumDiffRed)
+table(prd_LCA_Default$latentclass)
+
+testTable <- table(prd_LCA_Default$outcome<0.5,lesionsSumDiffRed$Recurence==0)
+epi.tests(testTable)
+
+##
+LCA_LASSO.SVM <- latentClass(lesionsSumDiffRed,
+              formula = Recurence ~ .,
+              hysteresis = 0.10,
+              method=LASSO_1SE,
+               classMethod=e1071::svm,
+              classModel.Control=list(probability = TRUE),
+              family="binomial")
+
+prd <- predict(LCA_LASSO.SVM,lesionsSumDiffRed)
+table(prd$latentclass)
+
+testTable <- table(prd$outcome<0.5,lesionsSumDiffRed$Recurence==0)
+epi.tests(testTable)
+
+
+```
+

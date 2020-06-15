@@ -1,0 +1,225 @@
+---
+title: "distealing_HLCM.Rmd"
+author: "eider"
+date: "5/28/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+etup
+```{r}
+setwd("C:/Users/eider/Dropbox/AD experiments/Covid_mexico/")
+load("datosDiagnosticoAlta.RDATA")
+library("FRESA.CAD")
+
+```
+
+
+#creating the outcome variable
+```{r}
+datosDiagnosticoAlta$RESULTADO <- NULL
+#pacientes difuntos O si entraton a cuidados intensivos (UCI)
+datosDiagnosticoAlta$outcome <- 1*(datosDiagnosticoAlta$FECHA_DEF != "9999-99-99" | datosDiagnosticoAlta$UCI == 1)
+#datosDiagnosticoAlta$outcome <-NULL
+datosDiagnosticoAlta$FECHA_DEF <- NULL
+datosDiagnosticoAlta$UCI <- NULL
+
+table(datosDiagnosticoAlta$outcome)
+```
+
+
+#spliting the dataset 
+```{r}
+set.seed(42)
+caseSet <- subset(datosDiagnosticoAlta,outcome==1)
+controlSet <- subset(datosDiagnosticoAlta,outcome==0)
+
+# 70 % of the UCI or death cases
+samplesCasetrain <- sample(nrow(caseSet),0.70*nrow(caseSet))
+# subseting the 70% 
+trainingCaseset <- caseSet[samplesCasetrain,]
+
+# 500 control cases
+samplesControltrain <- sample(nrow(controlSet),500)
+#subseting 500 control cases
+trainingControlset <- controlSet[samplesControltrain,]
+#merge 70% of data with cases and 500 training scores
+trainingset <- rbind(trainingCaseset,trainingControlset)
+#######################TEST
+
+# selecting the remaining 30% of UCI and Death
+controltestset <- controlSet[-samplesControltrain,]
+# merge the remaining 30 and the controlsetttest
+testingset <- rbind(caseSet[-samplesCasetrain,],controltestset[sample(nrow(controltestset),1000),])
+
+
+```
+
+#modlular functions
+
+```{r}
+#xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+get_model_features <- function(model) {
+  
+  selectedfeatures <- character()
+	if (!is.null(orgModel$selectedfeatures)){ #si los selected features de orgmodel tienen algo
+		selectedfeatures <- orgModel$selectedfeatures;
+	} else{ #si si estan vacios
+		if (!is.null(orgModel$bagging)){ #si el baggin tiene algo
+		  #las selected features pasan a ser las elegidas en el frecuency table
+			selectedfeatures <- names(orgModel$bagging$frequencyTable); 
+		}
+	}
+  
+  return(selectedfeatures)
+}
+```
+
+
+```{r}
+formula= outcome ~ .
+data = datosDiagnosticoAlta
+method=BSWiMS.model
+hysteresis = 0.0
+classMethod=KNN_method
+classModel.Control=NULL
+minsize=10
+
+#HLCM <- function(formula = formula, 
+#                 data=NULL,
+#                 method=BSWiMS.model,
+#                 hysteresis = 0.0,
+#                 classMethod=KNN_method,
+#                 classModel.Control=NULL,
+#                 minsize=10,...){
+  
+	if (class(formula) == "character"){
+		formula <- formula(formula);
+	}
+	varlist <- attr(terms(formula,data=data),"variables")
+	dependent <- as.character(varlist[[2]])
+	Outcome = dependent[1];
+	if (length(dependent) == 3)	{
+		Outcome = dependent[3];
+	}
+
+
+	alternativeModel <- list();
+	correctSet <- list();
+	classModel <- list();
+	selectedfeatures <- colnames(data)[!(colnames(data) %in% Outcome)]
+	orgModel <- try(method(formula,data));
+	if (inherits(orgModel, "try-error"))	{
+		orgModel <- 0.5;
+	}
+	selectedfeatures <- get_model_features(orgModel)
+	
+	accuracy <- 1.0;
+	inserted <- TRUE;
+	n=0;
+	classData <- data;
+	classData[,Outcome] <- numeric(nrow(classData));
+	classKey <- numeric(nrow(classData));
+	names(classKey) <- rownames(data);
+	errorfreq <- numeric();
+	classfreq <- numeric();
+	baseClass <- numeric();
+	if (length(selectedfeatures) > 0)	{
+		thePredict <- predict(orgModel,data);
+		outcomedata <- data[,Outcome];
+		correct <- ((thePredict >= 0.5) == (outcomedata > 0));
+		accuracy <- sum(correct)/nrow(data);
+		toterror <- sum(!correct);
+		baseClass <- c(baseClass,0);
+		correctSet[[n+1]] <- rownames(data[correct,]);
+		classfreq <- c(classfreq,length(correctSet[[n+1]]));
+		errorfreq <- c(errorfreq,toterror);
+		if (toterror > minsize){
+			nextdata <- data;
+			while (inserted && (toterror > minsize) && (toterror < (nrow(nextdata) - 1)))	{
+				inserted <- FALSE;
+				preData <- nextdata;
+				outcomedata <- preData[,Outcome];
+				falseP <- (thePredict >= (0.5 - hysteresis)) & (outcomedata == 0);
+				falseN <- (thePredict <= (0.5 + hysteresis)) & (outcomedata == 1);
+				incorrectSet <- falseP | falseN;
+				if (sum(incorrectSet) > nrow(nextdata)/2){
+					falseP <- (thePredict >= 0.5) & (outcomedata == 0);
+					falseN <- (thePredict <= 0.5) & (outcomedata == 1);
+					incorrectSet <- falseP | falseN;
+				}
+				if ((sum(falseP) >= (minsize/2)) && (sum(falseN) >= (minsize/2)))	{
+					nextdata <- preData[incorrectSet,];
+					alternativeM <- method(formula,nextdata,...);
+					nselected <- character();
+					nselected <- get_model_features(alternativeM)
+				
+					if (length(nselected)>0)		{
+						n <- n + 1;
+						baseClass <- c(baseClass,n+1);
+						selectedfeatures <- c(selectedfeatures,nselected);
+						selectedfeatures <- unique(selectedfeatures);
+						cat("[",sum(incorrectSet),"]");
+						alternativeModel[[n]] <- alternativeM;
+						thePredict <- rpredict(alternativeM,nextdata);
+						correct <- ((thePredict >= 0.5) == (nextdata[,Outcome] > 0));
+						correctSet[[n+1]] <- rownames(nextdata[correct,]);
+						classfreq <- c(classfreq,length(correctSet[[n+1]]));
+						toterror <- sum(abs(thePredict - nextdata[,Outcome]) > 0.5 );
+						errorfreq <- c(errorfreq,toterror);
+						inserted <- TRUE;
+					}	
+				}
+			}
+			if ( !inserted )		{
+				cat("<",sum(incorrectSet),">")
+				if (sum(incorrectSet) > minsize) 
+				{
+					n <- n + 1;
+					baseClass <- c(baseClass,n);
+					cat("(",sum(incorrectSet),")")
+					alternativeModel[[n]] <- (sum(preData[incorrectSet,Outcome])/nrow(preData[incorrectSet,]));
+					correctSet[[n+1]] <- rownames(preData[incorrectSet,]);
+					classfreq <- c(classfreq,length(correctSet[[n+1]]));
+					errorfreq <- c(errorfreq,0);
+				}
+			}
+			if (n > 0)
+			{
+				for (i in 1:(n+1))
+				{
+					classData[,Outcome] <- data[,Outcome];
+					classData[correctSet[[i]],Outcome] <- classData[correctSet[[i]],Outcome] + 2;
+					if (is.null(classModel.Control))
+					{
+						classModel[[i]] <- classMethod(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]);
+					}
+					else
+					{
+						classData[,Outcome] <- as.factor(classData[,Outcome]);
+						classModel[[i]] <- do.call(classMethod,c(list(formula(paste(Outcome,"~.")),classData[,c(Outcome,selectedfeatures)]),classModel.Control));
+					}
+					classKey[correctSet[[i]]] <- classKey[correctSet[[i]]] + 2^(i-1);
+				}
+			}
+		}
+	}
+	errorfreq <- errorfreq/nrow(data);
+	classfreq <- classfreq/nrow(data);
+	result <- list(original = orgModel,
+					alternativeModel = alternativeModel,
+					classModel = classModel,
+					accuracy = accuracy,
+					selectedfeatures = selectedfeatures,
+					hysteresis = hysteresis,
+					classSet = classKey,
+					errorfreq = errorfreq,
+					classfreq = classfreq,
+					baseClass = baseClass
+					)
+	class(result) <- "FRESA_HLCM"
+	return(result);
+
+	
+```
+

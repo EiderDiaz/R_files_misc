@@ -1,7 +1,7 @@
 ---
 title: "HCLUSS"
 author: "eider"
-date: "5/6/2020"
+date: "5/28/2020"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -158,7 +158,9 @@ get_class_model <- function(classMethod,classData,
 				  
   return(classModel)
 				  
-				}
+}
+
+
 ```
 
 
@@ -389,7 +391,6 @@ minsize=10
 				#originalset is the originial goodclassified 
 				classData[,Outcome] <- 2*originalSet + outcomedata;
 				classData[,Outcome] <- as.factor(classData[,Outcome]);
-				table(classData$outcome)
 				classModel[[1]] <- get_class_model(classMethod =classMethod,classData = classData,
 				                   selectedfeatures = selectedfeatures, Outcome = Outcome,
 				                   classModel.Control =classModel.Control )
